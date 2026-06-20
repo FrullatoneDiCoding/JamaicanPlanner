@@ -7,13 +7,19 @@ chi viene quando, e che vento/meteo c'è in spiaggia.
 
 1. **Piano ferie** — calendario condiviso: tocca un giorno per segnare la
    tua presenza (diventa 🟩), tocca di nuovo per toglierla (torna ⬜).
-   Il numero accanto al giorno indica quante persone in totale ci saranno.
-2. **Forecast** — scrivi il nome di una località e ricevi meteo e vento
-   per i prossimi giorni (dati da [Open-Meteo](https://open-meteo.com),
-   gratuito, nessuna chiave API richiesta).
+   Un giorno mostrato in 🔵 indica che altri membri ci saranno anche se tu
+   non sei tra loro. Per vedere nomi e conteggio esatto di ogni giorno,
+   usa "👥 Presenze del mese".
+2. **Forecast** — scrivi il nome di una località e ricevi uno snapshot
+   del vento (in **nodi**, con direzione e raffiche) e del meteo per le
+   fasce orarie chiave della giornata (09:00, 12:00, 17:00, 00:00). Puoi
+   specificare anche quanti giorni vedere direttamente nel comando, es.
+   `/meteo Gallipoli 7` (da 1 a 16, default 3). Dati da
+   [Open-Meteo](https://open-meteo.com), gratuito, nessuna chiave API
+   richiesta.
 
-L'accesso al bot è controllato: i nuovi utenti devono essere approvati
-manualmente dall'amministratore.
+Il bot è pensato per vivere dentro un gruppo Telegram chiuso: chiunque
+nel gruppo può usare tutte le funzioni, senza approvazione.
 
 ## Setup
 
@@ -24,10 +30,12 @@ manualmente dall'amministratore.
    a tua scelta, deve finire in `bot`)
 3. Copia il token che ti viene dato (es. `123456789:ABCdef...`)
 
-### 2. Scopri il tuo ID Telegram (per diventare admin)
+### 2. (Opzionale) Scopri il tuo ID Telegram
 
-Apri una chat con [@userinfobot](https://t.me/userinfobot) e copia il
-numero `Id` che ti restituisce.
+`ADMIN_IDS` non serve per le funzioni base del bot — è riservato a
+eventuali comandi futuri ad uso esclusivo admin. Se vuoi impostarlo
+comunque, apri una chat con [@userinfobot](https://t.me/userinfobot) e
+copia il numero `Id` che ti restituisce.
 
 ### 3. Installa le dipendenze
 
@@ -44,11 +52,12 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Apri `.env` e inserisci:
+Apri `.env` e inserisci almeno:
 - `BOT_TOKEN` = il token ottenuto da BotFather
-- `ADMIN_IDS` = il tuo ID Telegram (separati da virgola se più admin)
 
-### 5. Avvia il bot
+Lascia `ALLOWED_GROUP_ID` vuoto per ora — lo impostiamo al passo 6.
+
+### 5. Avvia il bot la prima volta
 
 ```bash
 python bot.py
@@ -57,27 +66,56 @@ python bot.py
 Se tutto è configurato correttamente vedrai in console:
 `JamaicaPlanner avviato, in polling...`
 
+### 6. Restringi il bot al tuo gruppo
+
+Senza questo passo, il bot risponderebbe in qualsiasi chat (anche in
+privato o in altri gruppi).
+
+1. Aggiungi il bot al gruppo Telegram dedicato
+2. Nel gruppo, manda `/groupid` — il bot ti risponde con l'ID di quella chat
+   (un numero negativo, es. `-1001234567890`)
+3. Apri `.env` e imposta `ALLOWED_GROUP_ID` con quel numero (incluso il `-`)
+4. Riavvia il bot (`Ctrl+C` poi `python bot.py` di nuovo)
+
+Da questo momento il bot ignora ogni messaggio che non arrivi da quel
+gruppo, avvisando chi scrive altrove che il bot non è disponibile lì.
+
+### 7. (Opzionale) Abilita una chat privata per il debug
+
+Se vuoi poter testare il bot scrivendogli in privato, senza disturbare
+il gruppo, mentre la restrizione del passo 6 resta attiva:
+
+1. Scrivi `/groupid` al bot in chat privata (apri una conversazione 1:1
+   con lui su Telegram)
+2. Copia il numero che ti risponde (questa volta sarà positivo, non
+   negativo come per i gruppi)
+3. Apri `.env` e imposta `ALLOWED_CHAT_ID` con quel numero
+4. Riavvia il bot
+
+Ora il bot funziona sia nel gruppo principale che nella tua chat privata,
+ma resta bloccato altrove.
+
 Il bot resta attivo finché il processo rimane in esecuzione (per test
 locali va bene così; per uso continuo nel tempo andrà spostato su un
 server sempre acceso — se vuoi, possiamo affrontarlo in seguito).
 
 ## Come si usa
 
-### Per i nuovi membri
-- `/start` — richiede l'accesso. L'amministratore riceve una notifica
-  con due bottoni (Approva / Rifiuta).
-
-### Per l'amministratore
-- `/pending` — mostra le richieste di accesso in sospeso
-- Le richieste arrivano anche automaticamente come messaggio con bottoni
-
-### Per i membri approvati
+- `/start` — messaggio di benvenuto con l'elenco dei comandi
+- `/groupid` — mostra l'ID della chat corrente (serve in fase di setup
+  per configurare `ALLOWED_GROUP_ID`)
 - `/calendario` — apre il calendario del mese corrente, naviga con « e »,
-  tocca un giorno per segnare/togliere la presenza, tocca "👥 Chi viene
-  oggi?" per vedere i presenti del giorno corrente
-- `/meteo Gallipoli` — meteo e vento per Gallipoli (o qualunque località)
+  tocca un giorno per segnare/togliere la presenza, tocca "👥 Presenze
+  del mese" per vedere l'elenco di tutti i giorni del mese con i nomi
+  di chi sarà presente
+- `/meteo Gallipoli` — vento (nodi, direzione, raffiche) e meteo per
+  Gallipoli (o qualunque località) alle 09:00, 12:00, 17:00 e 00:00 dei
+  prossimi 3 giorni (default)
+- `/meteo Gallipoli 7` — come sopra ma per 7 giorni (da 1 a 16, limite
+  massimo supportato da Open-Meteo; valori fuori range vengono adattati
+  automaticamente con un avviso)
 - `/meteo` (senza nome) — il bot chiede la località nel messaggio successivo
-- `/membri` — elenco dei membri approvati
+- `/membri` — elenco di chi ha usato il bot
 
 ## Struttura dei file
 
@@ -110,6 +148,7 @@ jamaicaplanner/
 ## Possibili estensioni future
 
 - Promemoria automatici (es. la sera prima di un giorno con presenze)
-- Comando per "rimuovere" un membro approvato
 - Statistiche tipo "giorno con più presenze del mese"
 - Salvataggio di una località preferita per evitare di scriverla ogni volta
+- Allerta automatica al gruppo se il vento previsto per la notte supera
+  una soglia configurabile

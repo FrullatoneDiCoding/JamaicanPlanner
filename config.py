@@ -27,7 +27,9 @@ _load_dotenv()
 # Token del bot ottenuto da @BotFather su Telegram
 BOT_TOKEN: str = os.environ.get("BOT_TOKEN", "")
 
-# ID Telegram numerico dell'admin che approva i nuovi membri.
+# ID Telegram numerico/i dell'admin (separati da virgola).
+# Il bot vive in un gruppo chiuso quindi non serve per approvare l'accesso;
+# serve solo per comandi riservati come /giorniforecast.
 # Per scoprire il proprio ID, scrivere a @userinfobot su Telegram.
 ADMIN_IDS: list[int] = [
     int(x) for x in os.environ.get("ADMIN_IDS", "").replace(" ", "").split(",") if x
@@ -36,20 +38,32 @@ ADMIN_IDS: list[int] = [
 # Percorso del database SQLite
 DB_PATH: str = os.environ.get("DB_PATH", "jamaicaplanner.db")
 
+# ID numerico del gruppo Telegram in cui il bot deve funzionare.
+# I gruppi hanno ID negativi (es. -1001234567890), quindi può iniziare con "-".
+# Se lasciato vuoto, il bot risponde ovunque (utile in fase di test).
+# Per scoprirlo: manda /groupid al bot nel gruppo.
+_allowed_group_raw = os.environ.get("ALLOWED_GROUP_ID", "").strip()
+ALLOWED_GROUP_ID: int | None = int(_allowed_group_raw) if _allowed_group_raw else None
+
+# ID numerico/i di chat aggiuntive sempre permesse, utili per fare debug in
+# privato (es. la tua chat personale col bot) mentre il gruppo resta l'unica
+# chat "ufficiale". Separati da virgola se più di uno. Per scoprire l'ID
+# della tua chat privata, manda /groupid al bot in quella chat.
+ALLOWED_CHAT_IDS: list[int] = [
+    int(x) for x in os.environ.get("ALLOWED_CHAT_ID", "").replace(" ", "").split(",") if x
+]
+
 # Lingua usata nei messaggi (italiano fisso, ma centralizzato qui)
 TIMEZONE: str = os.environ.get("TIMEZONE", "Europe/Rome")
 
 
 def validate() -> None:
     """Controlla che la configurazione minima sia presente, altrimenti
-    interrompe l'avvio con un messaggio chiaro."""
-    missing = []
+    interrompe l'avvio con un messaggio chiaro. ADMIN_IDS non è
+    obbligatorio: serve solo per i comandi riservati (es. /giorniforecast),
+    non per l'accesso generale al bot."""
     if not BOT_TOKEN:
-        missing.append("BOT_TOKEN")
-    if not ADMIN_IDS:
-        missing.append("ADMIN_IDS")
-    if missing:
         raise SystemExit(
-            "Configurazione mancante: " + ", ".join(missing) +
+            "Configurazione mancante: BOT_TOKEN"
             "\nCrea un file .env (vedi .env.example) oppure esporta le variabili d'ambiente."
         )

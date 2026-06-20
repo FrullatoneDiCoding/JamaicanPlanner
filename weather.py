@@ -1,16 +1,29 @@
 """
 Integrazione meteo/vento tramite Open-Meteo (gratuito, nessuna API key).
 
+Pensato per le nottate in spiaggia: il vento è il dato principale (in nodi,
+con direzione cardinale), mostrato a 4 fasce orarie chiave della giornata.
+
 Flusso:
 1. geocode(localita) -> lista di luoghi candidati (nome, lat, lon, paese)
-2. get_forecast(lat, lon) -> previsioni giornaliere vento + meteo
+2. get_hourly_forecast(lat, lon) -> dati orari per i prossimi giorni
+3. build_daily_snapshots(...) -> estrae solo le ore richieste (09, 12, 17, 00)
 """
 from dataclasses import dataclass
+from datetime import datetime
 
 import httpx
 
 GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search"
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
+
+# Ore della giornata da mostrare come "snapshot". 00:00 rappresenta la
+# fascia notturna (di fatto la notte del giorno corrente che inizia).
+SNAPSHOT_HOURS = [9, 12, 17, 0]
+
+# Open-Meteo supporta al massimo 16 giorni di previsione orarie.
+MAX_FORECAST_DAYS = 16
+DEFAULT_FORECAST_DAYS = 3
 
 # Codici WMO -> descrizione + emoji (sottoinsieme comune)
 WEATHER_CODES = {
@@ -37,6 +50,25 @@ WEATHER_CODES = {
     99: ("Temporale violento con grandine", "⛈️"),
 }
 
+COMPASS_DIRECTIONS = ["N", "NE", "E", "SE", "S", "SO", "O", "NO"]
+
+
+def direction_to_compass(degrees: int) -> str:
+    idx = round(degrees / 45) % 8
+    return COMPASS_DIRECTIONS[idx]
+
+
+def wind_emoji(knots: float) -> str:
+    """Indicatore visivo rapido dell'intensità del vento, in nodi.
+    Scala pensata per uso da spiaggia/mare (Beaufort semplificata)."""
+    if knots < 17:
+        return "🟢"  # calmo / brezza leggera, ottimo
+    if knots < 22:
+        return "🟡"  # moderato
+    if knots < 27:
+        return "🟠"  # teso
+    return "🔴"  # forte, attenzione
+
 
 @dataclass
 class Place:
@@ -55,23 +87,26 @@ class Place:
 
 
 @dataclass
-class DayForecast:
-    date: str
+class HourSnapshot:
+    dt: datetime
     weather_code: int
-    temp_max: float
-    temp_min: float
-    wind_speed_max: float  # km/h
-    wind_gusts_max: float  # km/h
-    wind_direction: int  # gradi
+    temperature: float
+    wind_knots: float
+    wind_gusts_knots: float
+    wind_direction: int
 
     def description(self) -> str:
         desc, emoji = WEATHER_CODES.get(self.weather_code, ("N/D", "❓"))
         return f"{emoji} {desc}"
 
-    def wind_compass(self) -> str:
-        directions = ["N", "NE", "E", "SE", "S", "SO", "O", "NO"]
-        idx = round(self.wind_direction / 45) % 8
-        return directions[idx]
+    def compass(self) -> str:
+        return direction_to_compass(self.wind_direction)
+
+    def wind_label(self) -> str:
+        return (
+            f"{wind_emoji(self.wind_knots)} {self.wind_knots:.0f} nodi "
+            f"(raffiche {self.wind_gusts_knots:.0f}) da {self.compass()}"
+        )
 
 
 async def geocode(query: str, limit: int = 5) -> list[Place]:
@@ -96,23 +131,26 @@ async def geocode(query: str, limit: int = 5) -> list[Place]:
     ]
 
 
-async def get_forecast(lat: float, lon: float, days: int = 4) -> list[DayForecast]:
+async def get_hourly_forecast(lat: float, lon: float, days: int = DEFAULT_FORECAST_DAYS) -> list[HourSnapshot]:
+    """Scarica i dati orari (vento in nodi) per i prossimi `days` giorni.
+    `days` viene limitato tra 1 e MAX_FORECAST_DAYS (limite imposto da Open-Meteo)."""
+    days = max(1, min(days, MAX_FORECAST_DAYS))
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.get(
             FORECAST_URL,
             params={
                 "latitude": lat,
                 "longitude": lon,
-                "daily": ",".join(
+                "hourly": ",".join(
                     [
                         "weathercode",
-                        "temperature_2m_max",
-                        "temperature_2m_min",
-                        "windspeed_10m_max",
-                        "windgusts_10m_max",
-                        "winddirection_10m_dominant",
+                        "temperature_2m",
+                        "windspeed_10m",
+                        "windgusts_10m",
+                        "winddirection_10m",
                     ]
                 ),
+                "windspeed_unit": "kn",  # nodi nativi, niente conversioni manuali
                 "timezone": "Europe/Rome",
                 "forecast_days": days,
             },
@@ -120,29 +158,62 @@ async def get_forecast(lat: float, lon: float, days: int = 4) -> list[DayForecas
         resp.raise_for_status()
         data = resp.json()
 
-    daily = data["daily"]
-    forecasts = []
-    for i, day in enumerate(daily["time"]):
-        forecasts.append(
-            DayForecast(
-                date=day,
-                weather_code=daily["weathercode"][i],
-                temp_max=daily["temperature_2m_max"][i],
-                temp_min=daily["temperature_2m_min"][i],
-                wind_speed_max=daily["windspeed_10m_max"][i],
-                wind_gusts_max=daily["windgusts_10m_max"][i],
-                wind_direction=daily["winddirection_10m_dominant"][i],
+    hourly = data["hourly"]
+    snapshots = []
+    for i, dt_str in enumerate(hourly["time"]):
+        snapshots.append(
+            HourSnapshot(
+                dt=datetime.fromisoformat(dt_str),
+                weather_code=hourly["weathercode"][i],
+                temperature=hourly["temperature_2m"][i],
+                wind_knots=hourly["windspeed_10m"][i],
+                wind_gusts_knots=hourly["windgusts_10m"][i],
+                wind_direction=hourly["winddirection_10m"][i],
             )
         )
-    return forecasts
+    return snapshots
 
 
-def format_forecast_message(place: Place, forecasts: list[DayForecast]) -> str:
+def build_daily_snapshots(
+    snapshots: list[HourSnapshot], hours: list[int] = SNAPSHOT_HOURS
+) -> dict[str, dict[int, HourSnapshot]]:
+    """Raggruppa gli snapshot orari per giorno, mantenendo solo le ore richieste.
+    Ritorna {data_iso: {ora: HourSnapshot}}."""
+    by_day: dict[str, dict[int, HourSnapshot]] = {}
+    for snap in snapshots:
+        if snap.dt.hour not in hours:
+            continue
+        day_key = snap.dt.date().isoformat()
+        by_day.setdefault(day_key, {})[snap.dt.hour] = snap
+    return by_day
+
+
+def format_forecast_message(
+    place: Place,
+    snapshots: list[HourSnapshot],
+    hours: list[int] = SNAPSHOT_HOURS,
+    days: int = DEFAULT_FORECAST_DAYS,
+) -> str:
+    days = max(1, min(days, MAX_FORECAST_DAYS))
+    by_day = build_daily_snapshots(snapshots, hours)
+    day_keys = sorted(by_day.keys())[:days]
+
     lines = [f"📍 *{place.label()}*\n"]
-    for f in forecasts:
-        lines.append(
-            f"*{f.date}* — {f.description()}\n"
-            f"  🌡️ {f.temp_min:.0f}°C / {f.temp_max:.0f}°C\n"
-            f"  💨 vento {f.wind_speed_max:.0f} km/h (raffiche {f.wind_gusts_max:.0f} km/h) da {f.wind_compass()}\n"
-        )
-    return "\n".join(lines)
+
+    for day_key in day_keys:
+        day_obj = datetime.fromisoformat(day_key).date()
+        lines.append(f"*{day_obj.strftime('%d/%m')}*")
+        hours_for_day = by_day[day_key]
+
+        for hour in hours:
+            snap = hours_for_day.get(hour)
+            if not snap:
+                continue
+            label = "00:00 🌙" if hour == 0 else f"{hour:02d}:00"
+            lines.append(
+                f"  {label} — {snap.description()}, {snap.temperature:.0f}°C\n"
+                f"     {snap.wind_label()}"
+            )
+        lines.append("")  # riga vuota tra i giorni
+
+    return "\n".join(lines).rstrip()

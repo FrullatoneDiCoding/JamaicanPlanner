@@ -2,28 +2,28 @@
 JamaicaPlanner — bot Telegram per organizzare giornate e serate al mare
 con il gruppo.
 
+Il bot vive in un gruppo chiuso: non c'è controllo di accesso, chiunque
+nel gruppo può usare tutte le funzioni.
+
 Funzioni:
-- Accesso controllato: gli utenti richiedono accesso, l'admin approva/rifiuta.
 - Piano ferie: calendario condiviso a tap, verde = presente.
-- Forecast: meteo e vento per una località, via Open-Meteo.
+- Forecast: meteo e vento (in nodi) per una località, via Open-Meteo.
 
 Avvio: python bot.py
 """
 import logging
 from datetime import date, datetime
 
-from telegram import (
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    Update,
-)
+from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import (
     Application,
+    ApplicationHandlerStop,
     CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     MessageHandler,
+    TypeHandler,
     filters,
 )
 
@@ -43,143 +43,75 @@ logger = logging.getLogger("jamaicaplanner")
 AWAITING_LOCATION: set[int] = set()
 
 
-# ---------------------------------------------------------------------------
-# Helpers di autorizzazione
-# ---------------------------------------------------------------------------
-
 def is_admin(user_id: int) -> bool:
     return user_id in config.ADMIN_IDS
 
 
-async def require_approved(update: Update) -> bool:
-    """Ritorna True se l'utente è approvato; altrimenti risponde e ritorna False."""
-    user_id = update.effective_user.id
-    if is_admin(user_id) or database.is_approved(user_id):
-        return True
-    await update.effective_message.reply_text(
-        "🚫 Non hai ancora accesso a questo bot.\n"
-        "Usa /start per richiederlo all'amministratore."
-    )
-    return False
+async def restrict_to_group(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Guardia globale: se ALLOWED_GROUP_ID è configurato, blocca qualsiasi
+    update che non provenga da quella chat o da una delle ALLOWED_CHAT_IDS
+    (usate per debug in privato), prima che arrivi agli altri handler.
+    Se ALLOWED_GROUP_ID non è impostato, non blocca nulla (utile in fase
+    di test/sviluppo)."""
+    if config.ALLOWED_GROUP_ID is None:
+        return  # nessuna restrizione configurata
+
+    chat = update.effective_chat
+    if chat is None:
+        return
+    if chat.id == config.ALLOWED_GROUP_ID or chat.id in config.ALLOWED_CHAT_IDS:
+        return  # ok, è la chat giusta (gruppo principale o chat di debug)
+
+    # Chat diversa da quella autorizzata: avvisa (solo per messaggi/comandi
+    # diretti, non per i click sui bottoni del calendario) e blocca.
+    if update.message is not None:
+        try:
+            await update.message.reply_text(
+                "🚫 Questo bot funziona solo nel gruppo a cui è dedicato."
+            )
+        except Exception:
+            logger.exception("Impossibile avvisare la chat non autorizzata %s", chat.id if chat else "?")
+    logger.warning("Update bloccato da chat non autorizzata: chat_id=%s", chat.id if chat else "?")
+    raise ApplicationHandlerStop
 
 
 # ---------------------------------------------------------------------------
-# /start — richiesta di accesso
+# /start
 # ---------------------------------------------------------------------------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
+    # Garantisce che l'utente esista in users (serve perché presence ha una
+    # foreign key su users.user_id) — nessuna approvazione richiesta.
+    database.ensure_user(user.id, user.username, user.first_name, status="approved")
 
-    if is_admin(user.id) or database.is_approved(user.id):
-        await update.message.reply_text(
-            f"🏖️ Bentornato su *JamaicaPlanner*, {user.first_name}!\n\n"
-            "Comandi disponibili:\n"
-            "/calendario — segna la tua presenza\n"
-            "/meteo — previsioni vento e meteo\n",
-            parse_mode=ParseMode.MARKDOWN,
-        )
-        return
+    lines = [
+        f"🏖️ Benvenuto su *JamaicaPlanner*, {user.first_name}!\n",
+        "Comandi disponibili:",
+        "/calendario — segna la tua presenza",
+        "/meteo <località> [giorni] — previsioni vento e meteo, es. /meteo Gallipoli 7",
+        "/membri — elenco di chi ha usato il bot",
+    ]
 
-    status = database.request_access(user.id, user.username, user.first_name)
-
-    if status == "pending":
-        await update.message.reply_text(
-            "✅ Richiesta di accesso inviata. Riceverai un messaggio quando "
-            "l'amministratore l'avrà approvata."
-        )
-        await notify_admins_new_request(context, user.id, user.username, user.first_name)
-    elif status == "approved":
-        await update.message.reply_text("✅ Sei già stato approvato, benvenuto!")
-    elif status == "rejected":
-        await update.message.reply_text(
-            "🚫 La tua richiesta era stata rifiutata. Contatta l'amministratore "
-            "se pensi sia un errore."
-        )
-
-
-async def notify_admins_new_request(
-    context: ContextTypes.DEFAULT_TYPE, user_id: int, username: str | None, first_name: str | None
-) -> None:
-    name = first_name or "Utente"
-    handle = f"@{username}" if username else f"id {user_id}"
-    keyboard = InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton("✅ Approva", callback_data=f"approve:{user_id}"),
-                InlineKeyboardButton("❌ Rifiuta", callback_data=f"reject:{user_id}"),
-            ]
-        ]
-    )
-    for admin_id in config.ADMIN_IDS:
-        try:
-            await context.bot.send_message(
-                chat_id=admin_id,
-                text=f"🔔 Nuova richiesta di accesso da *{name}* ({handle})",
-                parse_mode=ParseMode.MARKDOWN,
-                reply_markup=keyboard,
-            )
-        except Exception:
-            logger.exception("Impossibile notificare admin %s", admin_id)
-
-
-async def handle_approval_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    if not is_admin(query.from_user.id):
-        await query.answer("Solo l'amministratore può farlo.", show_alert=True)
-        return
-
-    action, user_id_str = query.data.split(":")
-    target_id = int(user_id_str)
-    target = database.get_user(target_id)
-
-    if action == "approve":
-        database.set_status(target_id, "approved")
-        await query.answer("Utente approvato ✅")
-        await query.edit_message_text(
-            f"✅ Approvato: {target['first_name'] if target else target_id}"
-        )
-        try:
-            await context.bot.send_message(
-                chat_id=target_id,
-                text="🎉 Sei stato approvato! Usa /calendario o /meteo per iniziare.",
-            )
-        except Exception:
-            logger.exception("Impossibile notificare l'utente approvato %s", target_id)
-    elif action == "reject":
-        database.set_status(target_id, "rejected")
-        await query.answer("Richiesta rifiutata")
-        await query.edit_message_text(
-            f"❌ Rifiutato: {target['first_name'] if target else target_id}"
-        )
-        try:
-            await context.bot.send_message(
-                chat_id=target_id,
-                text="🚫 La tua richiesta di accesso è stata rifiutata.",
-            )
-        except Exception:
-            logger.exception("Impossibile notificare l'utente rifiutato %s", target_id)
-
-
-async def list_pending_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not is_admin(update.effective_user.id):
-        return
-    pending = database.list_pending()
-    if not pending:
-        await update.message.reply_text("Nessuna richiesta in sospeso.")
-        return
-    lines = ["📋 *Richieste in sospeso:*\n"]
-    for p in pending:
-        handle = f"@{p['username']}" if p["username"] else f"id {p['user_id']}"
-        lines.append(f"• {p['first_name']} ({handle})")
     await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
 
 
+async def groupid_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Mostra l'ID della chat corrente, utile per configurare ALLOWED_GROUP_ID."""
+    chat = update.effective_chat
+    await update.message.reply_text(
+        f"ID di questa chat: `{chat.id}`\n"
+        f"Copialo in ALLOWED_GROUP_ID nel file .env per restringere il bot a questo gruppo.",
+        parse_mode=ParseMode.MARKDOWN,
+    )
+
+
 async def list_members_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not await require_approved(update):
-        return
+    user = update.effective_user
+    database.ensure_user(user.id, user.username, user.first_name, status="approved")
     members = database.list_approved()
     if not members:
-        await update.message.reply_text("Nessun membro approvato ancora.")
+        await update.message.reply_text("Nessun membro registrato ancora.")
         return
     lines = ["👥 *Membri del gruppo:*\n"]
     for m in members:
@@ -192,14 +124,16 @@ async def list_members_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 # ---------------------------------------------------------------------------
 
 async def calendario_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not await require_approved(update):
-        return
+    user = update.effective_user
+    database.ensure_user(user.id, user.username, user.first_name, status="approved")
+
     today = date.today()
-    markup = calendar_view.build_calendar(today.year, today.month, update.effective_user.id)
+    markup = calendar_view.build_calendar(today.year, today.month, user.id)
     await update.message.reply_text(
         "🏖️ *Piano ferie*\n"
         "Tocca un giorno per segnare/togliere la tua presenza.\n"
-        "🟩 = presente · ⬜ = assente · il numero indica quanti membri ci saranno.",
+        "🟩 = ci sei tu · 🔵 = ci sono altri ma non tu · ⬜ = nessuno.\n"
+        "Per i nomi e i numeri, usa \"👥 Presenze del mese\" qui sotto.",
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=markup,
     )
@@ -207,11 +141,12 @@ async def calendario_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def handle_calendar_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    user_id = query.from_user.id
+    user = query.from_user
+    user_id = user.id
 
-    if not (is_admin(user_id) or database.is_approved(user_id)):
-        await query.answer("Non hai accesso a questo bot.", show_alert=True)
-        return
+    # Garantisce che esista una riga in users prima di scrivere in presence,
+    # che ha una foreign key su users.user_id.
+    database.ensure_user(user_id, user.username, user.first_name, status="approved")
 
     data = query.data
 
@@ -238,15 +173,32 @@ async def handle_calendar_callback(update: Update, context: ContextTypes.DEFAULT
         await query.answer("Presenza segnata ✅" if now_present else "Presenza rimossa")
 
     elif action == calendar_view.CB_WHO:
-        day_str = parts[1]
-        day_obj = datetime.strptime(day_str, "%Y-%m-%d").date()
-        attendees = database.get_attendees_for_day(day_obj)
-        if attendees:
-            names = ", ".join(a["first_name"] for a in attendees)
-            text = f"👥 Il {day_str} ci saranno: {names}"
-        else:
-            text = f"Nessuno ha ancora confermato per il {day_str}."
-        await query.answer(text, show_alert=True)
+        year, month = int(parts[1]), int(parts[2])
+        text = build_month_attendance_text(year, month)
+        await query.answer()
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text=text,
+            parse_mode=ParseMode.MARKDOWN,
+        )
+
+
+def build_month_attendance_text(year: int, month: int) -> str:
+    """Costruisce il riepilogo testuale delle presenze di un mese,
+    giorno per giorno, con i nomi dei partecipanti."""
+    by_day = database.get_attendees_by_day_for_month(year, month)
+    month_name = calendar_view.MONTH_NAMES_IT[month]
+
+    if not by_day:
+        return f"👥 *Presenze di {month_name} {year}*\n\nNessuna presenza ancora segnata."
+
+    lines = [f"👥 *Presenze di {month_name} {year}*\n"]
+    for day_str in sorted(by_day.keys()):
+        day_num = int(day_str.split("-")[2])
+        names = by_day[day_str]
+        lines.append(f"*{day_num}* — {', '.join(names)} ({len(names)})")
+
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -254,31 +206,51 @@ async def handle_calendar_callback(update: Update, context: ContextTypes.DEFAULT
 # ---------------------------------------------------------------------------
 
 async def meteo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not await require_approved(update):
-        return
+    user = update.effective_user
+    database.ensure_user(user.id, user.username, user.first_name, status="approved")
 
-    if context.args:
-        query_text = " ".join(context.args)
-        await send_forecast_for_query(update, query_text)
-    else:
-        AWAITING_LOCATION.add(update.effective_user.id)
+    if not context.args:
+        AWAITING_LOCATION.add(user.id)
         await update.message.reply_text(
-            "📍 Per quale località vuoi il meteo? Scrivi il nome (es. *Gallipoli*).",
+            "📍 Per quale località vuoi il meteo? Scrivi il nome (es. *Gallipoli*).\n"
+            f"Puoi anche specificare i giorni: *Gallipoli 7* (da 1 a {weather.MAX_FORECAST_DAYS}, "
+            f"default {weather.DEFAULT_FORECAST_DAYS}).",
             parse_mode=ParseMode.MARKDOWN,
         )
+        return
+
+    query_text, days = parse_location_and_days(context.args)
+    await send_forecast_for_query(update, query_text, days=days)
+
+
+def parse_location_and_days(args: list[str]) -> tuple[str, int]:
+    """Estrae località e giorni opzionali da una lista di argomenti.
+    Se l'ultimo token è un intero, viene interpretato come numero di giorni
+    e rimosso dal nome della località. Altrimenti tutti gli argomenti
+    formano la località e si usa il default."""
+    if len(args) > 1:
+        try:
+            days = int(args[-1])
+            return " ".join(args[:-1]), days
+        except ValueError:
+            pass
+    return " ".join(args), weather.DEFAULT_FORECAST_DAYS
 
 
 async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     if user_id not in AWAITING_LOCATION:
-        return  # ignora messaggi di testo non richiesti
+        return  # ignora messaggi di testo non richiesti (es. chiacchiere nel gruppo)
     AWAITING_LOCATION.discard(user_id)
-    if not await require_approved(update):
-        return
-    await send_forecast_for_query(update, update.message.text)
+    query_text, days = parse_location_and_days(update.message.text.split())
+    await send_forecast_for_query(update, query_text, days=days)
 
 
-async def send_forecast_for_query(update: Update, query_text: str) -> None:
+async def send_forecast_for_query(
+    update: Update, query_text: str, days: int = weather.DEFAULT_FORECAST_DAYS
+) -> None:
+    clamped_days = max(1, min(days, weather.MAX_FORECAST_DAYS))
+
     msg = await update.effective_message.reply_text(f"🔎 Cerco '{query_text}'...")
 
     try:
@@ -297,13 +269,16 @@ async def send_forecast_for_query(update: Update, query_text: str) -> None:
     place = places[0]
 
     try:
-        forecasts = await weather.get_forecast(place.latitude, place.longitude)
+        forecasts = await weather.get_hourly_forecast(place.latitude, place.longitude, days=clamped_days)
     except Exception:
         logger.exception("Errore forecast")
         await msg.edit_text("⚠️ Errore nel recuperare le previsioni. Riprova più tardi.")
         return
 
-    text = weather.format_forecast_message(place, forecasts)
+    text = weather.format_forecast_message(place, forecasts, days=clamped_days)
+    if clamped_days != days:
+        text += f"\n\n⚠️ Giorni richiesti fuori range, mostrati {clamped_days} (max {weather.MAX_FORECAST_DAYS})."
+
     await msg.edit_text(text, parse_mode=ParseMode.MARKDOWN)
 
 
@@ -317,15 +292,17 @@ def main() -> None:
 
     app = Application.builder().token(config.BOT_TOKEN).build()
 
+    # Guardia globale, eseguita prima di tutti gli altri handler (group=-1).
+    # Se l'update non blocca con ApplicationHandlerStop, raggiunge gli handler
+    # normali (group=0 di default).
+    app.add_handler(TypeHandler(Update, restrict_to_group), group=-1)
+
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("pending", list_pending_cmd))
+    app.add_handler(CommandHandler("groupid", groupid_cmd))
     app.add_handler(CommandHandler("membri", list_members_cmd))
     app.add_handler(CommandHandler("calendario", calendario_cmd))
     app.add_handler(CommandHandler("meteo", meteo_cmd))
 
-    app.add_handler(
-        CallbackQueryHandler(handle_approval_callback, pattern=r"^(approve|reject):")
-    )
     app.add_handler(
         CallbackQueryHandler(
             handle_calendar_callback,

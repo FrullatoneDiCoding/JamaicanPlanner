@@ -7,7 +7,6 @@ Ogni giorno è un bottone:
 Premendo il giorno si fa il toggle. Freccette per cambiare mese.
 """
 import calendar
-from datetime import date
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -55,12 +54,16 @@ def build_calendar(year: int, month: int, user_id: int) -> InlineKeyboardMarkup:
         else:
             day_str = day.isoformat()
             is_present = day_str in user_days
-            count = len(presence_map.get(day_str, []))
+            others_present = len(presence_map.get(day_str, [])) > 0
 
-            symbol = "🟩" if is_present else "⬜"
+            if is_present:
+                symbol = "🟩"
+            elif others_present:
+                symbol = "🔵"  # qualcun altro ci sarà, ma non l'utente che guarda
+            else:
+                symbol = "⬜"
+
             label = f"{symbol}{day.day}"
-            if count > 0:
-                label += f"·{count}"
 
             week_row.append(
                 InlineKeyboardButton(label, callback_data=f"{CB_DAY}:{day_str}")
@@ -77,7 +80,7 @@ def build_calendar(year: int, month: int, user_id: int) -> InlineKeyboardMarkup:
         rows.append(week_row)
 
     rows.append(
-        [InlineKeyboardButton("👥 Chi viene oggi?", callback_data=f"{CB_WHO}:{date.today().isoformat()}")]
+        [InlineKeyboardButton("👥 Presenze del mese", callback_data=f"{CB_WHO}:{year}:{month}")]
     )
 
     return InlineKeyboardMarkup(rows)

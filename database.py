@@ -1,9 +1,13 @@
 """
 Gestione del database SQLite per JamaicaPlanner.
 
+Il bot vive in un gruppo Telegram chiuso: non c'è un flusso di
+approvazione, ogni utente che interagisce viene registrato automaticamente.
+
 Tabelle:
-- users: membri del gruppo, stato di approvazione
+- users: membri del gruppo che hanno usato il bot
 - presence: presenze segnate sul calendario (utente + data)
+- settings: impostazioni configurabili a runtime (es. giorni di forecast)
 """
 import sqlite3
 from contextlib import contextmanager
@@ -17,7 +21,7 @@ CREATE TABLE IF NOT EXISTS users (
     user_id     INTEGER PRIMARY KEY,
     username    TEXT,
     first_name  TEXT,
-    status      TEXT NOT NULL DEFAULT 'pending',  -- pending | approved | rejected
+    status      TEXT NOT NULL DEFAULT 'approved',  -- mantenuto per compatibilità, sempre 'approved'
     requested_at TEXT DEFAULT (datetime('now')),
     decided_at  TEXT
 );
@@ -27,6 +31,11 @@ CREATE TABLE IF NOT EXISTS presence (
     day      TEXT NOT NULL,  -- formato YYYY-MM-DD
     PRIMARY KEY (user_id, day),
     FOREIGN KEY (user_id) REFERENCES users(user_id)
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
 );
 """
 
@@ -57,24 +66,33 @@ def get_user(user_id: int) -> Optional[sqlite3.Row]:
         ).fetchone()
 
 
-def request_access(user_id: int, username: Optional[str], first_name: Optional[str]) -> str:
-    """Registra (o ritrova) una richiesta di accesso. Ritorna lo status attuale."""
+def ensure_user(
+    user_id: int,
+    username: Optional[str] = None,
+    first_name: Optional[str] = None,
+    status: str = "approved",
+) -> None:
+    """Garantisce che esista una riga in users per questo user_id.
+    Il bot vive in un gruppo chiuso, quindi non c'è approvazione manuale:
+    ogni utente che interagisce viene registrato direttamente come
+    'approved'. Se l'utente esiste già, aggiorna solo username/first_name
+    se cambiati, senza toccare lo status esistente."""
     existing = get_user(user_id)
     if existing:
-        return existing["status"]
+        if (username and username != existing["username"]) or (
+            first_name and first_name != existing["first_name"]
+        ):
+            with get_conn() as conn:
+                conn.execute(
+                    "UPDATE users SET username = ?, first_name = ? WHERE user_id = ?",
+                    (username or existing["username"], first_name or existing["first_name"], user_id),
+                )
+        return
     with get_conn() as conn:
         conn.execute(
-            "INSERT INTO users (user_id, username, first_name, status) VALUES (?, ?, ?, 'pending')",
-            (user_id, username, first_name),
-        )
-    return "pending"
-
-
-def set_status(user_id: int, status: str) -> None:
-    with get_conn() as conn:
-        conn.execute(
-            "UPDATE users SET status = ?, decided_at = datetime('now') WHERE user_id = ?",
-            (status, user_id),
+            "INSERT INTO users (user_id, username, first_name, status, decided_at) "
+            "VALUES (?, ?, ?, ?, datetime('now'))",
+            (user_id, username, first_name, status),
         )
 
 
@@ -87,13 +105,6 @@ def list_approved() -> list[sqlite3.Row]:
     with get_conn() as conn:
         return conn.execute(
             "SELECT * FROM users WHERE status = 'approved' ORDER BY first_name"
-        ).fetchall()
-
-
-def list_pending() -> list[sqlite3.Row]:
-    with get_conn() as conn:
-        return conn.execute(
-            "SELECT * FROM users WHERE status = 'pending' ORDER BY requested_at"
         ).fetchall()
 
 
@@ -156,3 +167,41 @@ def get_attendees_for_day(day: date) -> list[sqlite3.Row]:
             """,
             (day_str,),
         ).fetchall()
+
+
+def get_attendees_by_day_for_month(year: int, month: int) -> dict[str, list[str]]:
+    """Ritorna {giorno_iso: [nome1, nome2, ...]} per ogni giorno del mese
+    che ha almeno una presenza, con i nomi già pronti da mostrare."""
+    prefix = f"{year:04d}-{month:02d}-"
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT p.day, u.first_name
+            FROM presence p
+            JOIN users u ON u.user_id = p.user_id
+            WHERE p.day LIKE ?
+            ORDER BY p.day, u.first_name
+            """,
+            (prefix + "%",),
+        ).fetchall()
+    result: dict[str, list[str]] = {}
+    for row in rows:
+        result.setdefault(row["day"], []).append(row["first_name"] or "?")
+    return result
+
+
+# ---------- Impostazioni configurabili (generiche, per usi futuri) ----------
+
+def get_setting(key: str, default: Optional[str] = None) -> Optional[str]:
+    with get_conn() as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else default
+
+
+def set_setting(key: str, value: str) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
