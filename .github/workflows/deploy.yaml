@@ -11,7 +11,7 @@ jobs:
       - name: Check commit message for deploy trigger
         id: check
         run: |
-          cd /root/dev/JamaicanPlanner
+          cd /root/dev/JamaicaPlanner
           MSG=$(git log -1 --pretty=%B)
           echo "Commit message: $MSG"
           if [[ "$MSG" == *"[deploy]"* ]]; then
@@ -23,7 +23,7 @@ jobs:
       - name: Pull and restart
         if: steps.check.outputs.should_deploy == 'true'
         run: |
-          cd /root/dev/JamaicanPlanner
+          cd /root/dev/JamaicaPlanner
           git pull origin prod
           systemctl restart jamaicaplanner
 
