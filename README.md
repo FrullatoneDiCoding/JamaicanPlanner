@@ -6,10 +6,12 @@ chi viene quando, e che vento/meteo c'è in spiaggia.
 ## Funzioni
 
 1. **Piano ferie** — calendario condiviso: tocca un giorno per segnare la
-   tua presenza (diventa 🟩), tocca di nuovo per toglierla (torna ⬜).
-   Un giorno mostrato in 🔵 indica che altri membri ci saranno anche se tu
-   non sei tra loro. Per vedere nomi e conteggio esatto di ogni giorno,
-   usa "👥 Presenze del mese".
+   tua presenza (il numero si racchiude in `[15]`), tocca di nuovo per
+   toglierla (torna al numero nudo `15`). Un giorno mostrato come `(15)`
+   indica che altri membri ci saranno anche se tu non sei tra loro.
+   Niente emoji né simboli aggiuntivi: solo il numero, per restare
+   compatti anche su mobile dentro un gruppo. Per vedere nomi e conteggio
+   esatto di ogni giorno, usa "👥 Presenze del mese".
 2. **Forecast** — scrivi il nome di una località e ricevi uno snapshot
    del vento (in **nodi**, con direzione e raffiche) e del meteo per le
    fasce orarie chiave della giornata (09:00, 12:00, 17:00, 00:00). Puoi

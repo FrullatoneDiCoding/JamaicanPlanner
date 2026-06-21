@@ -1,14 +1,15 @@
 """
 Generazione della tastiera inline per il calendario "Piano ferie".
 
-Telegram non permette di colorare il testo dei bottoni inline, quindi il
-segnale "presente/assente" è dato dallo STILE delle cifre del numero,
-non da emoji o simboli aggiuntivi (che su mobile, specie nei gruppi,
-fanno traboccare il bottone e troncano il testo):
+Telegram non permette di colorare il testo dei bottoni inline (niente
+font colorato, niente stile), quindi il segnale "presente/assente" è
+dato solo dal numero del giorno, racchiuso in caratteri diversi — niente
+emoji né simboli aggiuntivi, per restare il più compatti possibile anche
+su mobile dentro un gruppo (dove la colonna dei bottoni è più stretta):
 
-- numero in GRASSETTO Unicode (𝟏𝟓) → l'utente che guarda è presente
-- numero in CORSIVO/SANS Unicode (𝟣𝟧) → altri sono presenti, ma non l'utente
-- numero normale (15) → nessuno è presente
+- [15] → l'utente che guarda è presente (parentesi quadre)
+- (15) → altri sono presenti, ma non l'utente che guarda (parentesi tonde)
+-  15  → nessuno è presente (solo il numero)
 
 Premendo il giorno si fa il toggle. Freccette per cambiare mese.
 """
@@ -30,21 +31,6 @@ CB_DAY = "day"
 CB_NAV = "nav"
 CB_WHO = "who"
 CB_NOOP = "noop"
-
-# Mappe cifra normale -> cifra Unicode stilizzata, stessa larghezza visiva
-# di un numero normale (nessuna emoji, nessun carattere doppio).
-_BOLD_DIGITS = {str(i): chr(0x1D7CE + i) for i in range(10)}   # 𝟎𝟏𝟐...
-_SANS_DIGITS = {str(i): chr(0x1D7E2 + i) for i in range(10)}   # 𝟢𝟣𝟤...
-
-
-def style_day_number(day: int, style: str) -> str:
-    """Convverte il numero del giorno nello stile richiesto.
-    style: 'bold' (presente), 'sans' (altri presenti), 'normal' (nessuno)."""
-    digits = _BOLD_DIGITS if style == "bold" else _SANS_DIGITS if style == "sans" else None
-    text = str(day)
-    if digits is None:
-        return text
-    return "".join(digits[c] for c in text)
 
 
 def build_calendar(year: int, month: int, user_id: int) -> InlineKeyboardMarkup:
@@ -78,13 +64,11 @@ def build_calendar(year: int, month: int, user_id: int) -> InlineKeyboardMarkup:
             others_present = len(presence_map.get(day_str, [])) > 0
 
             if is_present:
-                style = "bold"
+                label = f"[{day.day}]"
             elif others_present:
-                style = "sans"
+                label = f"({day.day})"
             else:
-                style = "normal"
-
-            label = style_day_number(day.day, style)
+                label = f"{day.day}"
 
             week_row.append(
                 InlineKeyboardButton(label, callback_data=f"{CB_DAY}:{day_str}")
