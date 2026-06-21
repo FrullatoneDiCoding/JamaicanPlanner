@@ -66,12 +66,12 @@ def wind_emoji(knots: float) -> str:
     """Indicatore visivo rapido dell'intensità del vento, in nodi.
     Scala pensata per uso da spiaggia/mare (Beaufort semplificata)."""
     if knots < 17:
-        return "🟢"  # calmo / brezza leggera, ottimo
+        return "🟢"
     if knots < 22:
-        return "🟡"  # moderato
+        return "🟡"
     if knots < 27:
-        return "🟠"  # teso
-    return "🔴"  # forte, attenzione
+        return "🟠"
+    return "🔴"
 
 
 @dataclass
@@ -101,7 +101,7 @@ class HourSnapshot:
 
     def description(self) -> str:
         desc, emoji = WEATHER_CODES.get(self.weather_code, ("N/D", "❓"))
-        return f"{emoji} {desc}"
+        return f"{emoji} _{desc}_"
 
     def compass(self) -> str:
         return direction_to_compass(self.wind_direction)
@@ -148,7 +148,7 @@ async def get_hourly_forecast(lat: float, lon: float, days: int = DEFAULT_FORECA
                         "winddirection_10m",
                     ]
                 ),
-                "windspeed_unit": "kn",  # nodi nativi, niente conversioni manuali
+                "windspeed_unit": "kn",
                 "timezone": "Europe/Rome",
                 "forecast_days": days,
             },
@@ -215,11 +215,11 @@ def format_forecast_message(
             kmh = snap.wind_knots * 1.852
             gusts_kmh = snap.wind_gusts_knots * 1.852
             lines.append(
-                f"{hour_emoji} *{hour:02d}:00* · {snap.description()} · {snap.temperature:.0f}°C"
+                f"{hour_emoji} *{hour:02d}:00* · {snap.description()} · *{snap.temperature:.0f}°C*"
             )
             lines.append(
-                f"      {wind_emoji(snap.wind_knots)} {snap.wind_knots:.0f} nodi ({kmh:.0f} km/h)"
-                f" · raffiche {snap.wind_gusts_knots:.0f} ({gusts_kmh:.0f} km/h) · {snap.compass()}"
+                f"      {wind_emoji(snap.wind_knots)} *{snap.wind_knots:.0f} nodi* ({kmh:.0f} km/h)"
+                f" · raffiche *{snap.wind_gusts_knots:.0f}* ({gusts_kmh:.0f} km/h) · _{snap.compass()}_"
             )
         lines.append("")
 
