@@ -87,7 +87,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     lines = [
         f"🏖️ Benvenuto su *JamaicaPlanner*, {user.first_name}!\n",
-        "Comandi disponibili: cazzi",
+        "Comandi disponibili: cazzi e peni",
         "/calendario — segna la tua presenza",
         "/meteo <località> <giorni> — previsioni vento e meteo, es. /meteo Gallipoli 7",
         "/membri — elenco di chi ha usato il bot",
