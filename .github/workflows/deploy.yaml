@@ -4,6 +4,7 @@ on:
   push:
     branches: [prod]
 
+
 jobs:
   deploy:
     runs-on: self-hosted
