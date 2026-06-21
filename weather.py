@@ -52,6 +52,10 @@ WEATHER_CODES = {
 
 COMPASS_DIRECTIONS = ["N", "NE", "E", "SE", "S", "SO", "O", "NO"]
 
+WEEKDAY_NAMES_IT = ["Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì", "Sabato", "Domenica"]
+
+HOUR_EMOJI = {9: "🕘", 12: "🕛", 17: "🕔", 0: "🌙"}
+
 
 def direction_to_compass(degrees: int) -> str:
     idx = round(degrees / 45) % 8
@@ -101,14 +105,6 @@ class HourSnapshot:
 
     def compass(self) -> str:
         return direction_to_compass(self.wind_direction)
-
-    def wind_label(self) -> str:
-        kmh = self.wind_knots * 1.852
-        gusts_kmh = self.wind_gusts_knots * 1.852
-        return (
-            f"{wind_emoji(self.wind_knots)} {self.wind_knots:.0f} nodi ({kmh:.0f} km/h) "
-            f"(raffiche {self.wind_gusts_knots:.0f} nodi / {gusts_kmh:.0f} km/h) da {self.compass()}"
-        )
 
 
 async def geocode(query: str, limit: int = 5) -> list[Place]:
@@ -200,22 +196,31 @@ def format_forecast_message(
     by_day = build_daily_snapshots(snapshots, hours)
     day_keys = sorted(by_day.keys())[:days]
 
+    SEPARATOR = "─────────────────"
     lines = [f"📍 *{place.label()}*\n"]
 
     for day_key in day_keys:
         day_obj = datetime.fromisoformat(day_key).date()
-        lines.append(f"*{day_obj.strftime('%d/%m')}*")
-        hours_for_day = by_day[day_key]
+        weekday = WEEKDAY_NAMES_IT[day_obj.weekday()]
+        lines.append(SEPARATOR)
+        lines.append(f"📅 *{weekday} {day_obj.strftime('%d/%m')}*")
+        lines.append(SEPARATOR)
 
+        hours_for_day = by_day[day_key]
         for hour in hours:
             snap = hours_for_day.get(hour)
             if not snap:
                 continue
-            label = "00:00 🌙" if hour == 0 else f"{hour:02d}:00"
+            hour_emoji = HOUR_EMOJI.get(hour, "🕐")
+            kmh = snap.wind_knots * 1.852
+            gusts_kmh = snap.wind_gusts_knots * 1.852
             lines.append(
-                f"  {label} — {snap.description()}, {snap.temperature:.0f}°C\n"
-                f"     {snap.wind_label()}"
+                f"{hour_emoji} *{hour:02d}:00* · {snap.description()} · {snap.temperature:.0f}°C"
             )
-        lines.append("")  # riga vuota tra i giorni
+            lines.append(
+                f"      {wind_emoji(snap.wind_knots)} {snap.wind_knots:.0f} nodi ({kmh:.0f} km/h)"
+                f" · raffiche {snap.wind_gusts_knots:.0f} ({gusts_kmh:.0f} km/h) · {snap.compass()}"
+            )
+        lines.append("")
 
     return "\n".join(lines).rstrip()
