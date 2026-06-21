@@ -103,9 +103,11 @@ class HourSnapshot:
         return direction_to_compass(self.wind_direction)
 
     def wind_label(self) -> str:
+        kmh = self.wind_knots * 1.852
+        gusts_kmh = self.wind_gusts_knots * 1.852
         return (
-            f"{wind_emoji(self.wind_knots)} {self.wind_knots:.0f} nodi "
-            f"(raffiche {self.wind_gusts_knots:.0f}) da {self.compass()}"
+            f"{wind_emoji(self.wind_knots)} {self.wind_knots:.0f} nodi ({kmh:.0f} km/h) "
+            f"(raffiche {self.wind_gusts_knots:.0f} nodi / {gusts_kmh:.0f} km/h) da {self.compass()}"
         )
 
 
