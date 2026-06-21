@@ -22,7 +22,7 @@ jobs:
       - name: Pull and restart
         if: steps.check.outputs.should_deploy == 'true'
         run: |
-          cd /root/dev/JamaicanPlanner
+          cd /root/dev/JamaicaPlanner
           git pull origin main
           systemctl restart jamaicaplanner
 
