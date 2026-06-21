@@ -2,7 +2,7 @@ name: Deploy to VPS
 
 on:
   push:
-    branches: [master]
+    branches: [prod]
 
 jobs:
   deploy:
@@ -11,6 +11,7 @@ jobs:
       - name: Check commit message for deploy trigger
         id: check
         run: |
+          cd /root/dev/JamaicanPlanner
           MSG=$(git log -1 --pretty=%B)
           echo "Commit message: $MSG"
           if [[ "$MSG" == *"[deploy]"* ]]; then
@@ -22,8 +23,8 @@ jobs:
       - name: Pull and restart
         if: steps.check.outputs.should_deploy == 'true'
         run: |
-          cd /root/dev/JamaicaPlanner
-          git pull origin main
+          cd /root/dev/JamaicanPlanner
+          git pull origin prod
           systemctl restart jamaicaplanner
 
       - name: Verify service is running
