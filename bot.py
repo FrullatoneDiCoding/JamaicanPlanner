@@ -89,7 +89,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"🏖️ Benvenuto su *JamaicaPlanner*, {user.first_name}!\n",
         "Comandi disponibili:",
         "/calendario — segna la tua presenza",
-        "/meteo <località> [giorni] — previsioni vento e meteo, es. /meteo Gallipoli 7",
+        "/meteo <località> <giorni> — previsioni vento e meteo, es. /meteo Gallipoli 7",
         "/membri — elenco di chi ha usato il bot",
     ]
 
@@ -132,9 +132,9 @@ async def calendario_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await update.message.reply_text(
         "🏖️ *Piano ferie*\n"
         "Tocca un giorno per segnare/togliere la tua presenza.\n\n"
-        "[15] = ci sei tu\n"
-        "(15) = ci sono altri ma non tu\n"
-        "15 = nessuno\n\n"
+        "`[15]` = ci sei tu\n"
+        "`(15)` = ci sono altri ma non tu\n"
+        "`15` = nessuno\n\n"
         "Per i nomi e i numeri esatti, usa \"👥 Presenze del mese\" qui sotto.",
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=markup,
