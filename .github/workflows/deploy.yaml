@@ -1,0 +1,33 @@
+name: Deploy to VPS
+
+on:
+  push:
+    branches: [master]
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    steps:
+      - name: Check commit message for deploy trigger
+        id: check
+        run: |
+          MSG=$(git log -1 --pretty=%B)
+          echo "Commit message: $MSG"
+          if [[ "$MSG" == *"[deploy]"* ]]; then
+            echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_deploy=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Pull and restart
+        if: steps.check.outputs.should_deploy == 'true'
+        run: |
+          cd /root/dev/JamaicanPlanner
+          git pull origin main
+          systemctl restart jamaicaplanner
+
+      - name: Verify service is running
+        if: steps.check.outputs.should_deploy == 'true'
+        run: |
+          sleep 3
+          systemctl is-active --quiet jamaicaplanner && echo "✅ Bot is running" || (echo "❌ Bot failed to start" && exit 1)
