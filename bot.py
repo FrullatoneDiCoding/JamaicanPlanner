@@ -132,7 +132,7 @@ async def calendario_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await update.message.reply_text(
         "🏖️ *Piano ferie*\n"
         "Tocca un giorno per segnare/togliere la tua presenza.\n"
-        "🟩 = ci sei tu · 🔵 = ci sono altri ma non tu · ⬜ = nessuno.\n"
+        # "🟩 = ci sei tu · 🔵 = ci sono altri ma non tu · ⬜ = nessuno.\n"
         "Per i nomi e i numeri, usa \"👥 Presenze del mese\" qui sotto.",
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=markup,
